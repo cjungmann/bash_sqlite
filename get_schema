@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+
+show_usage()
+{
+    echo "Usage: "
+    echo "./get_schema [database_path] [table_name]"
+    echo
+    echo "Get a list of tables with the following:"
+    echo "sqlite3 [database_path] \".schema [table_name]\""
+    echo "for example, "
+    echo "sqlite3 ~/.config/chromium/Default/Cookies \".schema Cookies\""
+}
+
+get_table_field_list()
+{
+    local str="$1"
+    local left_to_discard=$( cut -d \( -f 1 <<< "${str}" )
+    local -i startpos="$(( ${#left_to_discard} + 1 ))"
+    local -i sublen="$(( ${#str} - ${startpos} -2 ))"
+    local right_to_keep="${str:${startpos}:${sublen}}"
+    echo "$right_to_keep"
+}
+
+is_constraint()
+{
+    local IFS=' '
+    local -a lparts=( $1 )
+    local first_str="${lparts[0]}"
+    [[ "$first_str" =~ CONSTRAINT|PRIMARY|UNIQUE|CHECK|FOREIGN ]]
+}
+
+get_field_list()
+{
+    local CreateS 
+    local -a Lines
+    local -a Constraints
+    local -a FieldList
+    local line
+    local IFS=','
+    local -i in_constraint=0
+    local -a cur_constraint
+
+    CreateS=$( sqlite3 "$Database" ".schema $Table" )
+    if [ $? -ne 0 ]; then
+        echo "Failed to open table '$Table' in database '$Database'"
+        exit 1
+    fi
+
+    Lines=( $( get_table_field_list "${CreateS}" ) )
+
+    for line in "${Lines[@]}"; do
+        if [ $in_constraint -ne 0 ]; then
+            if [ "${line:0:1}" = ' ' ]; then
+                cur_constraint+=( "$line" )
+            else
+                Constraints+=( "${cur_constraint[*]}" )
+                cur_constraint=()
+                in_constraint=0
+                FieldList+=( "$line" )
+            fi
+        else
+            if is_constraint "$line"; then
+                cur_constraint=( "$line" )
+                in_constraint=1
+            else
+                FieldList+=( "$line" )
+            fi
+        fi
+    done
+
+    # Pick up any hanging constraints
+    if [ "${#cur_constraint[@]}" -gt 0 ]; then
+        Constraints+=( "${cur_constraint[*]}" )
+    fi
+        
+
+    echo "The fields for table '$Table' are:"
+    printf "   '%s'\n" "${FieldList[@]}"
+
+    echo
+    echo "The table constraints are:"
+    printf "   '%s'\n" "${Constraints[@]}"
+
+}
+
+
+########################
+# Begin execution here #
+########################
+
+declare Database="$1"
+declare Table="$2"
+
+if [ $# -lt 1 ]; then
+    show_usage
+    exit 1
+fi
+
+get_field_list
+
